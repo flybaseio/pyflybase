@@ -1,0 +1,270 @@
+# -*- coding: utf-8 *-*
+from collections import OrderedDict
+from pyflybase import collection
+
+
+class Database(object):
+    """For instance this class, you needs an instance of
+    :class:`pyflybase.flybase_client.FlybaseClient` and the name of your database.
+
+    Example usage:
+
+    .. code-block:: python
+
+       >>> from pyflybase import FlybaseClient, database
+       >>> con = FlybaseClient("flybaseAPIKey")
+       >>> database.Database(con, "database")
+       Database(FlybaseClient('flybaseAPIKey', 'v1'), 'database')
+
+    Easy usage (Attibute-style access):
+
+    .. code-block:: python
+
+       >>> from pyflybase import FlybaseClient
+       >>> con = FlybaseClient("flybaseAPIKey")
+       >>> con.database
+       Database(FlybaseClient('flybaseAPIKey', 'v1'), 'database')
+
+    Easy usage (Dictionary-style access):
+
+    .. code-block:: python
+
+       >>> from pyflybase import FlybaseClient
+       >>> con = FlybaseClient("flybaseAPIKey")
+       >>> con["database"]
+       Database(FlybaseClient('flybaseAPIKey', 'v1'), 'database')
+    """
+
+    def __init__(self, connection, name):
+        self.__connection = connection
+        self.name = name
+
+    @property
+    def connection(self):
+        """An instance of :class:`pyflybase.flybase_client.FlybaseClient` used for
+        internal calls to flybase REST API via :mod:`flybaseclient`.
+        """
+        return self.__connection
+
+    def __eq__(self, other):
+        if isinstance(other, Database):
+            us = (self.connection, self.name)
+            them = (other.connection, other.name)
+            return us == them
+        return NotImplemented
+
+    def __repr__(self):
+        return "Database(%r, %r)" % (self.connection, self.name)
+
+    def __getattr__(self, name):
+        """Get a collection using a attribute-style access.
+
+        Example usage:
+
+        .. code-block:: python
+
+           >>> from pyflybase import FlybaseClient
+           >>> con = FlybaseClient("flybaseAPIKey")
+           >>> db = con.database
+           >>> db.collection
+           Collection(Database(FlybaseClient('flybaseAPIKey', 'v1'),
+           'database'), 'collection')
+        """
+        return collection.Collection(self, name)
+
+    def __getitem__(self, name):
+        """Get a database using a dictionary-style access.
+
+        Example usage:
+
+        .. code-block:: python
+
+           >>> from pyflybase import FlybaseClient
+           >>> con = FlybaseClient("flybaseAPIKey")
+           >>> db = con["database"]
+           >>> db["collection"]
+           Collection(Database(FlybaseClient('flybaseAPIKey', 'v1'),
+           'database'), 'collection')
+        """
+        return self.__getattr__(name)
+
+    def collection_names(self):
+        """Returns a list with the collection names of your database.
+
+        Example usage:
+
+        .. code-block:: python
+
+           >>> from pyflybase import FlybaseClient
+           >>> con = FlybaseClient("flybaseAPIKey")
+           >>> con.database.collection_names()
+           [u'collection', u'users', u'issues']
+        """
+        return self.connection.request.list_collections(self.name)
+
+    def command(self, command, value=1, **kwargs):
+        """Execute a database-collection level command via
+        :func:`flybaseclient.client.flybaseClient.run_command`. The supported
+        methods are listed on flybase REST API Documentation:
+        https://support.flybase.io/entries/20433053-rest-api-for-flybasedb
+
+        .. warning:: all of commands on flybase REST API are case-sensitive.
+
+        Example usage:
+
+        A command like ``{dbstats: 1}`` can be sent using:
+
+        .. code-block:: python
+
+           >>> db.iomand("dbStats")
+
+        For a command where the value matters, like ``{collstats:
+        collection_name}`` we can do:
+
+        .. code-block:: python
+
+           >>> db.iomand("collStats", collection_name)
+
+        Full example usage:
+
+        .. code-block:: python
+
+           >>> from pyflybase import FlybaseClient
+           >>> con = FlybaseClient("flybaseAPIKey")
+           >>> con.database.iomand("dbStats")
+           {u'storageSize': 57344, u'serverUsed': u'dsXXXXXX-b.flybase.io',
+           u'ok': 1.0, u'avgObjSize': 101.88235294117646, u'db': u'dbname',
+           u'indexes': 7, u'objects': 34, u'collections': 9,
+           u'fileSize': 16777216, u'numExtents': 9, u'dataSize': 3464,
+           u'indexSize': 57232, u'nsSizeMB': 16}
+           >>>
+           >>> con.database.iomand("collStats", "collectionname")
+           {u'count': 7, u'ns': u'dbname.collectionname',
+           u'serverUsed': u'dsXXXXXX-b.flybase.io', u'lastExtentSize': 8192,
+           u'avgObjSize': 258.85714285714283, u'totalIndexSize': 8176,
+           u'systemFlags': 1, u'ok': 1.0, u'userFlags': 0, u'numExtents': 1,
+           u'nindexes': 1, u'storageSize': 8192,
+           u'indexSizes': {u'_id_': 8176},
+           u'paddingFactor': 1.0020000000000007, u'size': 1812}
+        """
+        cmd = OrderedDict()
+        if isinstance(command, dict):
+            cmd.update(command)
+        elif isinstance(command, basestring):
+            cmd[command] = str(value)
+        cmd.update(kwargs)
+        return self.connection.request.run_command(self.name, cmd)
+
+    def error(self):
+        """Get a database error if one occured on the last operation.
+
+        Return None if the last operation was error-free. Otherwise return the
+        error that occurred.
+
+        .. versionadded:: 1.2
+        """
+        error = self.iomand("getLastError")
+        error_msg = error.get("err", "")
+        if error_msg is None:
+            return None
+        del error["serverUsed"]
+        del error['lastOp']
+        return error
+
+    def last_status(self):
+        """Get status information from the last operation.
+
+        Returns a dict with status information.
+
+        Example usage:
+
+        .. code-block:: python
+
+           >>> from pyflybase import FlybaseClient
+           >>> con = FlybaseClient("flybaseAPIKey")
+           >>> con.database.last_status()
+           {'ok': 1.0, 'err': None, 'connectionId': 951470, 'n': 0}
+
+        .. versionadded:: 1.2
+        """
+        result = self.iomand('getLastError')
+        del result['serverUsed']
+        del result['lastOp']
+        return result
+
+    def previous_error(self):
+        """Get the most recent error to have occurred on this database.
+
+        Only returns errors that have occurred since the last call to
+        `Database.reset_error_history`. Returns None if no such errors have
+        occurred.
+
+        .. versionadded:: 1.2
+        """
+        error = self.iomand("getPrevError")
+        if error.get("err", 0) is None:
+            return None
+        del error["serverUsed"]
+        return error
+
+    def profiling_level(self):
+        """Get the database's current profiling level.
+
+        Returns one of (:data:`~pyflybase.OFF`,
+        :data:`~pyflybase.SLOW_ONLY`, :data:`~pyflybase.ALL`).
+
+        .. versionadded:: 1.2
+        """
+        result = self.iomand("profile", -1)
+
+        assert result["was"] >= 0 and result["was"] <= 2
+        return result["was"]
+
+    def reset_error_history(self):
+        """Reset the error history of this database.
+
+        Calls to `Database.previous_error` will only return errors that have
+        occurred since the most recent call to this method.
+
+        .. versionadded:: 1.2
+        """
+        self.iomand("resetError")
+
+    def set_profiling_level(self, level, slow_ms=None):
+        """Set the database's profiling level.
+
+        :Parameters:
+          - `level`: Specifies a profiling level, see list of possible values
+            below.
+          - `slow_ms`: Optionally modify the threshold for the profile to
+            consider a query or operation.  Even if the profiler is off queries
+            slower than the `slow_ms` level will get written to the logs.
+
+        Possible `level` values:
+
+        +-------------------------------+------------------------------------+
+        | Level                         | Setting                            |
+        +===============================+====================================+
+        | :data:`~pyflybase.OFF`       | Off. No profiling.                 |
+        +-------------------------------+------------------------------------+
+        | :data:`~pyflybase.SLOW_ONLY` | On. Only includes slow operations. |
+        +-------------------------------+------------------------------------+
+        | :data:`~pyflybase.ALL`       | On. Includes all operations.       |
+        +-------------------------------+------------------------------------+
+
+        Raises :class:`ValueError` if level is not one of
+        (:data:`~pyflybase.OFF`, :data:`~pyflybase.SLOW_ONLY`,
+        :data:`~pyflybase.ALL`).
+
+        .. versionadded:: 1.2
+        """
+        if not isinstance(level, int) or level < 0 or level > 2:
+            raise ValueError("level must be one of (OFF, SLOW_ONLY, ALL)")
+
+        if slow_ms is not None and not isinstance(slow_ms, int):
+            raise TypeError("slow_ms must be an integer")
+
+        if slow_ms is not None:
+            self.iomand("profile", level, slowms=slow_ms)
+        else:
+            self.iomand("profile", level)
